@@ -104,11 +104,14 @@ for (id_imovel,) in cursor.fetchall():
                         if f_salvas == 3: break
         except: pass
 
-print("🖥️ Construindo Dashboard HTML...")
+print("🖥️ Construindo Dashboard HTML e Página de Histórico...")
 df_imoveis = pd.read_sql_query("SELECT * FROM imoveis", conn)
 df_historico = pd.read_sql_query("SELECT * FROM historico_precos", conn)
 conn.close()
 
+# ==========================================
+# GERAÇÃO DO INDEX.HTML (DASHBOARD PRINCIPAL)
+# ==========================================
 html = """<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -118,10 +121,13 @@ html = """<!DOCTYPE html>
     <style>
         body { margin: 0; padding: 0; background-color: #e9ecef; }
         .dashboard-header { background: #2c3e50; color: white; padding: 20px; font-family: 'Segoe UI', sans-serif; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;}
+        .botoes-topo { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        .botoes-topo a { background-color: #2ecc71; color: white; padding: 8px 15px; border-radius: 6px; text-decoration: none; font-size: 14px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+        .botoes-topo a.btn-hist { background-color: #f39c12; }
         .control-group { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
         .control-group select { padding: 10px; border-radius: 6px; border: none; font-size: 14px; font-weight: bold; cursor: pointer; }
         .vitrine-container { display: flex; flex-wrap: wrap; gap: 20px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; justify-content: center; }
-        .card-imovel { background: white; border-radius: 12px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); width: 340px; overflow: hidden; display: flex; flex-direction: column; }
+        .card-imovel { background: white; border-radius: 12px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); width: 340px; overflow: hidden; display: flex; flex-direction: column; position: relative; }
         .galeria-fotos { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; }
         .galeria-fotos img { width: 100%; height: 200px; object-fit: cover; scroll-snap-align: center; flex-shrink: 0; }
         .info-imovel { padding: 15px; display: flex; flex-direction: column; gap: 8px; height: 100%; }
@@ -144,13 +150,17 @@ html = """<!DOCTYPE html>
         .botao-link { text-align: center; color: white; text-decoration: none; padding: 10px; border-radius: 6px; font-weight: bold; transition: 0.2s; font-size: 13px; flex: 1; }
         .botao-venda { background: #2ecc71; } .botao-aluguel { background: #f39c12; } .botao-cinza { background: #95a5a6; }
         .galeria-fotos::-webkit-scrollbar { display: none; }
+        .selo-alerta { position: absolute; top: 10px; left: 10px; color: white; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: bold; z-index: 10; box-shadow: 0 2px 4px rgba(0,0,0,0.3); text-transform: uppercase; }
+        .selo-novo { background: #9b59b6; }
+        .selo-alterado { background: #e67e22; }
     </style>
 </head>
 <body>
 <div class="dashboard-header">
-    <div style="display: flex; align-items: center; gap: 15px;">
+    <div class="botoes-topo">
         <h2>🏢 Dashboard Imobiliário</h2>
-        <a href="https://github.com/gustavoymiyake-cmd/dashboard-imoveis/actions" target="_blank" style="background-color: #2ecc71; color: white; padding: 8px 15px; border-radius: 6px; text-decoration: none; font-size: 14px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">🔄 Forçar Atualização</a>
+        <a href="https://github.com/GustavoYoshiharuMiyake/dashboard-imoveis/actions" target="_blank">🔄 Forçar Atualização</a>
+        <a href="historico.html" class="btn-hist">📖 Ver Histórico Completo</a>
     </div>
     <div class="control-group">
         <select id="filtroStatus" onchange="aplicarFiltros()">
@@ -180,6 +190,19 @@ for index, row in df_imoveis.iterrows():
 
     atributos_data = f"data-status='{status}' data-venda='{val_venda}' data-aluguel='{val_aluguel}'"
     
+    # === LÓGICA DE SELOS (NOVO / ALTERADO) ===
+    selo_html = ""
+    is_new = row.get('data_primeira_vista') == hoje
+    
+    # Verifica se teve alteração HOJE
+    mudancas_hoje = df_historico[(df_historico['id_imovel'] == id_imovel) & (df_historico['data_alteracao'] == hoje)]
+    is_changed_today = not mudancas_hoje.empty
+
+    if is_new:
+        selo_html = "<div class='selo-alerta selo-novo'>✨ Novo Imóvel</div>"
+    elif is_changed_today:
+        selo_html = "<div class='selo-alerta selo-alterado'>📉 Preço Alterado</div>"
+
     html_fotos = ""
     for i in range(1, 4):
         caminho_foto = f"fotos_imoveis/{id_imovel}_foto_{i}.jpg"
@@ -195,8 +218,8 @@ for index, row in df_imoveis.iterrows():
     historico_html = ""
     mudancas = df_historico[df_historico['id_imovel'] == id_imovel]
     if not mudancas.empty:
-        historico_html = "<div class='historico-box'><strong>📉 Histórico de Preços:</strong><br>"
-        for _, mudanca in mudancas.iterrows():
+        historico_html = "<div class='historico-box'><strong>📉 Histórico Recente:</strong><br>"
+        for _, mudanca in mudancas.tail(3).iterrows(): # Mostra apenas as 3 últimas alterações no card
             p_antigo = f"R$ {mudanca['preco_antigo']:,.0f}".replace(',', '.')
             p_novo = f"R$ {mudanca['preco_novo']:,.0f}".replace(',', '.')
             historico_html += f"<span style='display:block; margin-top:2px;'>• {mudanca['data_alteracao']}: {mudanca['mercado']} de {p_antigo} para {p_novo}</span>"
@@ -222,6 +245,7 @@ for index, row in df_imoveis.iterrows():
     
     html += f"""
     <div class='card-imovel' {atributos_data}>
+        {selo_html}
         <div class='galeria-fotos'>{html_fotos}</div>
         <div class='info-imovel'>
             <div class='preco-box'>
@@ -286,4 +310,55 @@ function aplicarFiltros() {
 
 with open("index.html", "w", encoding="utf-8") as f:
     f.write(html)
-print("✅ Tudo pronto! O ficheiro index.html foi atualizado.")
+
+# ==========================================
+# GERAÇÃO DO HISTORICO.HTML (PÁGINA SECUNDÁRIA)
+# ==========================================
+html_hist = """<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Histórico de Alterações</title>
+    <style>
+        body { margin: 0; padding: 0; background-color: #e9ecef; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        .dashboard-header { background: #2c3e50; color: white; padding: 20px; display: flex; justify-content: space-between; align-items: center; }
+        .btn-voltar { background-color: #3498db; color: white; padding: 8px 15px; border-radius: 6px; text-decoration: none; font-weight: bold; }
+        .content { padding: 30px; max-width: 1000px; margin: 0 auto; }
+        table { width: 100%; background: white; border-collapse: collapse; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+        th { background: #34495e; color: white; padding: 15px; text-align: left; }
+        td { padding: 15px; border-bottom: 1px solid #ddd; color: #2c3e50; }
+        tr:hover { background-color: #f1f2f6; }
+        .p-antigo { color: #e74c3c; text-decoration: line-through; }
+        .p-novo { color: #2ecc71; font-weight: bold; }
+        .link-id { color: #3498db; text-decoration: none; font-weight: bold; }
+    </style>
+</head>
+<body>
+<div class="dashboard-header">
+    <h2>📖 Central de Auditoria (Histórico de Preços)</h2>
+    <a href="index.html" class="btn-voltar">⬅️ Voltar ao Dashboard</a>
+</div>
+<div class="content">
+"""
+
+if df_historico.empty:
+    html_hist += "<div style='background: white; padding: 20px; border-radius: 8px; text-align: center;'><h3>Nenhuma alteração de preço registrada ainda.</h3><p>O robô começou a monitorar os valores base hoje. Volte nos próximos dias!</p></div>"
+else:
+    html_hist += "<table><tr><th>Data da Alteração</th><th>ID do Imóvel</th><th>Mercado</th><th>Preço Antigo</th><th>Preço Novo</th></tr>"
+    # Ordena da alteração mais recente para a mais antiga
+    df_hist_sorted = df_historico.sort_values(by='data_alteracao', ascending=False)
+    
+    for _, h in df_hist_sorted.iterrows():
+        p_ant = f"R$ {h['preco_antigo']:,.0f}".replace(',', '.')
+        p_nov = f"R$ {h['preco_novo']:,.0f}".replace(',', '.')
+        id_im = h['id_imovel']
+        html_hist += f"<tr><td>{h['data_alteracao']}</td><td><a href='https://www.quintoandar.com.br/imovel/{id_im}' target='_blank' class='link-id'>#{id_im}</a></td><td>{h['mercado']}</td><td class='p-antigo'>{p_ant}</td><td class='p-novo'>{p_nov}</td></tr>"
+    html_hist += "</table>"
+
+html_hist += "</div></body></html>"
+
+with open("historico.html", "w", encoding="utf-8") as f:
+    f.write(html_hist)
+
+print("✅ Tudo pronto! Ficheiros index.html e historico.html atualizados.")
