@@ -30,14 +30,44 @@ conn.commit()
 cursor.execute("SELECT id_imovel, preco_venda, preco_aluguel FROM imoveis")
 memoria_precos = {row[0]: {'venda': row[1], 'aluguel': row[2]} for row in cursor.fetchall()}
 
+# ==========================================
+# O NOVO HELICÓPTERO (Venda e Aluguel)
+# ==========================================
 url_mapa = "https://apigw.prod.quintoandar.com.br/house-listing-search/v2/search/coordinates"
-params_mapa = {"context.mapShowing": "true", "context.listShowing": "true", "filters.businessContext": "SALE", "filters.location.coordinate.lat": "-23.5255", "filters.location.coordinate.lng": "-46.7733", "filters.location.viewport.east": "-46.7600", "filters.location.viewport.north": "-23.5150", "filters.location.viewport.south": "-23.5350", "filters.location.viewport.west": "-46.7850", "filters.location.countryCode": "BR", "filters.houseSpecs.houseTypes[0]": "APARTMENT"}
+params_base = {
+    "context.mapShowing": "true", 
+    "context.listShowing": "true", 
+    "filters.location.coordinate.lat": "-23.5255", 
+    "filters.location.coordinate.lng": "-46.7733", 
+    "filters.location.viewport.east": "-46.7600", 
+    "filters.location.viewport.north": "-23.5150", 
+    "filters.location.viewport.south": "-23.5350", 
+    "filters.location.viewport.west": "-46.7850", 
+    "filters.location.countryCode": "BR", 
+    "filters.houseSpecs.houseTypes[0]": "APARTMENT"
+}
 
-print("🚁 Mapeando Presidente Altino...")
+print("🚁 Mapeando Presidente Altino (Buscando Venda e Aluguel)...")
+lista_ids = []
 try:
-    res_mapa = requests.get(url_mapa, params=params_mapa, headers=headers)
-    lista_ids = [item['_id'] for item in res_mapa.json().get('hits', {}).get('hits', [])]
-except:
+    # Voo 1: Mercado de Venda
+    params_venda = params_base.copy()
+    params_venda["filters.businessContext"] = "SALE"
+    res_venda = requests.get(url_mapa, params=params_venda, headers=headers)
+    ids_venda = [item['_id'] for item in res_venda.json().get('hits', {}).get('hits', [])]
+    
+    # Voo 2: Mercado de Aluguel
+    params_aluguel = params_base.copy()
+    params_aluguel["filters.businessContext"] = "RENT"
+    res_aluguel = requests.get(url_mapa, params=params_aluguel, headers=headers)
+    ids_aluguel = [item['_id'] for item in res_aluguel.json().get('hits', {}).get('hits', [])]
+    
+    # Unindo os dois mundos e removendo duplicados
+    lista_ids = list(set(ids_venda + ids_aluguel))
+    print(f"✅ Radares detectaram: {len(ids_venda)} para Venda | {len(ids_aluguel)} para Aluguel.")
+    print(f"📊 Total de Imóveis Únicos para infiltrar: {len(lista_ids)}\n")
+except Exception as e:
+    print(f"Erro no radar: {e}")
     lista_ids = []
 
 def checar_mercado(id_imovel, mercado):
@@ -63,6 +93,7 @@ for id_imovel in lista_ids:
             area = house_info.get('area') or 0
             preco_venda_base = house_info.get('salePrice') or 0
             
+            # Note que deixei o preco_venda_base == 0 aqui para ele capturar os que são APENAS aluguel
             if area <= 40 and (preco_venda_base <= 420000 or preco_venda_base == 0):
                 venda_ativa, p_venda, d_venda = checar_mercado(id_imovel, 'comprar')
                 alug_ativa, p_aluguel, d_aluguel = checar_mercado(id_imovel, 'alugar')
@@ -190,11 +221,8 @@ for index, row in df_imoveis.iterrows():
 
     atributos_data = f"data-status='{status}' data-venda='{val_venda}' data-aluguel='{val_aluguel}'"
     
-    # === LÓGICA DE SELOS (NOVO / ALTERADO) ===
     selo_html = ""
     is_new = row.get('data_primeira_vista') == hoje
-    
-    # Verifica se teve alteração HOJE
     mudancas_hoje = df_historico[(df_historico['id_imovel'] == id_imovel) & (df_historico['data_alteracao'] == hoje)]
     is_changed_today = not mudancas_hoje.empty
 
@@ -219,7 +247,7 @@ for index, row in df_imoveis.iterrows():
     mudancas = df_historico[df_historico['id_imovel'] == id_imovel]
     if not mudancas.empty:
         historico_html = "<div class='historico-box'><strong>📉 Histórico Recente:</strong><br>"
-        for _, mudanca in mudancas.tail(3).iterrows(): # Mostra apenas as 3 últimas alterações no card
+        for _, mudanca in mudancas.tail(3).iterrows():
             p_antigo = f"R$ {mudanca['preco_antigo']:,.0f}".replace(',', '.')
             p_novo = f"R$ {mudanca['preco_novo']:,.0f}".replace(',', '.')
             historico_html += f"<span style='display:block; margin-top:2px;'>• {mudanca['data_alteracao']}: {mudanca['mercado']} de {p_antigo} para {p_novo}</span>"
@@ -346,9 +374,7 @@ if df_historico.empty:
     html_hist += "<div style='background: white; padding: 20px; border-radius: 8px; text-align: center;'><h3>Nenhuma alteração de preço registrada ainda.</h3><p>O robô começou a monitorar os valores base hoje. Volte nos próximos dias!</p></div>"
 else:
     html_hist += "<table><tr><th>Data da Alteração</th><th>ID do Imóvel</th><th>Mercado</th><th>Preço Antigo</th><th>Preço Novo</th></tr>"
-    # Ordena da alteração mais recente para a mais antiga
     df_hist_sorted = df_historico.sort_values(by='data_alteracao', ascending=False)
-    
     for _, h in df_hist_sorted.iterrows():
         p_ant = f"R$ {h['preco_antigo']:,.0f}".replace(',', '.')
         p_nov = f"R$ {h['preco_novo']:,.0f}".replace(',', '.')
