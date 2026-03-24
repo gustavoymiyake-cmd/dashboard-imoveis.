@@ -148,7 +148,10 @@ html = """<!DOCTYPE html>
 </head>
 <body>
 <div class="dashboard-header">
-    <h2>🏢 Dashboard Imobiliário</h2>
+    <div style="display: flex; align-items: center; gap: 15px;">
+        <h2>🏢 Dashboard Imobiliário</h2>
+        <a href="https://github.com/SEU_USUARIO/dashboard-imoveis/actions" target="_blank" style="background-color: #2ecc71; color: white; padding: 8px 15px; border-radius: 6px; text-decoration: none; font-size: 14px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">🔄 Forçar Atualização</a>
+    </div>
     <div class="control-group">
         <select id="filtroStatus" onchange="aplicarFiltros()">
             <option value="Todos">👁️ Todos os Imóveis</option>
