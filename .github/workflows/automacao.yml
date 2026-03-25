@@ -2,37 +2,36 @@ name: Atualizar Dashboard Imoveis
 
 on:
   schedule:
-    # Roda todos os dias as 09:00 UTC (06:00 da manha no Brasil)
     - cron: '0 9 * * *'
-  workflow_dispatch: # Permite rodar manualmente clicando num botao
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Permissao essencial para guardar os dados novos no repositorio
+      contents: write
 
     steps:
       - name: Checkout do codigo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Configurar o Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: Instalar dependencias
+      - name: Instalar dependencias vitais (QuintoAndar + VivaReal)
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install requests pandas selenium webdriver-manager beautifulsoup4
 
-      - name: Rodar o Motor do Robo (Extrair e Gerar HTML)
+      - name: Rodar o Super Robo
         run: python main.py
 
-      - name: Guardar os novos dados (Commit & Push)
+      - name: Guardar os novos dados
         run: |
           git config --global user.name "Robo Imobiliario"
           git config --global user.email "robo@exemplo.com"
           git add -A
-          git commit -m "Atualizacao automatica: Novos dados e imagens" || echo "Nenhuma mudanca detetada"
+          git commit -m "Atualizacao: QuintoAndar e VivaReal" || echo "Nenhuma mudanca detetada"
           git push
