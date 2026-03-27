@@ -17,7 +17,7 @@ from bs4 import BeautifulSoup
 hoje = datetime.now().strftime('%Y-%m-%d')
 headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
-print("🚀 INICIANDO SUPER SISTEMA (ISOLAMENTO DE FRONTEIRA ATIVADO)...")
+print("🚀 INICIANDO SUPER SISTEMA (SISTEMA DUPLO DE CAPTURA DE IMAGENS)...")
 
 pasta_fotos = 'fotos_imoveis'
 if not os.path.exists(pasta_fotos): os.makedirs(pasta_fotos)
@@ -82,9 +82,9 @@ for id_imovel in lista_ids_qa:
     except: pass
 
 # ==========================================
-# 2. MOTOR VIVAREAL (ISOLAMENTO DE FRONTEIRA)
+# 2. MOTOR VIVAREAL
 # ==========================================
-print("\n🕵️ Iniciando Infiltração VivaReal com Fronteiras Rígidas...")
+print("\n🕵️ Iniciando Infiltração VivaReal...")
 chrome_options = Options()
 chrome_options.add_argument('--headless=new') 
 chrome_options.add_argument('--no-sandbox')
@@ -104,7 +104,6 @@ for mercado, url_base in rotas_vr.items():
     while True:
         driver.get(f"{url_base}?pagina={pagina}")
         
-        # Desliga a preguiça das imagens para podermos extraí-las
         driver.execute_script("""
             document.querySelectorAll('img').forEach(img => {
                 img.loading = 'eager';
@@ -136,22 +135,16 @@ for mercado, url_base in rotas_vr.items():
                 url = link_tag.get('href', '')
                 if "ERROR" in url or "showcase" in url.lower() or "osasco" not in url.lower(): continue
                 
-                # 🚧 O ALGORITMO DE FRONTEIRA INFALÍVEL 🚧
                 current = link_tag
                 card = current
                 while current.parent and current.parent.name not in ['body', 'html']:
                     parent = current.parent
-                    
-                    # Converte o código do PAI em texto e procura TODOS os IDs lá dentro
                     html_pai = str(parent)
                     ids_no_pai = set(re.findall(r'-id-(\d+)', html_pai))
-                    
-                    # Remove o NOSSO ID. Se sobrar algum, significa que tocamos no anúncio vizinho!
                     ids_no_pai.discard(target_id)
                     if len(ids_no_pai) > 0:
-                        card = current # A gaveta perfeita é o nível logo abaixo
+                        card = current 
                         break
-                        
                     current = parent
                 
                 texto_card = card.get_text(separator=' ', strip=True).lower()
@@ -169,16 +162,16 @@ for mercado, url_base in rotas_vr.items():
                         vagas = int((re.search(r'(\d+)\s*vaga', texto_card) or type('obj', (object,), {'group': lambda self, x: 0})()).group(1))
                         banheiros = int((re.search(r'(\d+)\s*banheiro', texto_card) or type('obj', (object,), {'group': lambda self, x: 0})()).group(1))
                         
-                        # 📸 Extrai fotos APENAS da caixa isolada
+                        # 📸 FILTRO RELAXADO: Aceita ZAP e VivaReal, recusa apenas Lixo 📸
                         fotos_validas = []
                         for tag in card.find_all(['img', 'source']):
                             for attr in ['src', 'data-src', 'srcset', 'data-srcset']:
                                 val = tag.get(attr, '')
                                 if val:
-                                    # Lida com URLs complexas (srcset)
                                     urls = [u.strip().split(' ')[0] for u in val.split(',')]
                                     for u in urls:
-                                        if 'http' in u and 'vr-listing' in u.lower():
+                                        u_low = u.lower()
+                                        if u_low.startswith('http') and 'logo' not in u_low and 'avatar' not in u_low and 'icon' not in u_low and 'svg' not in u_low:
                                             fotos_validas.append(u)
                                             
                         fotos = list(dict.fromkeys(fotos_validas))[:3]
@@ -202,18 +195,18 @@ for mercado, url_base in rotas_vr.items():
 driver.quit()
 
 # ==========================================
-# 3. ROTINA DE LIMPEZA E DESTRUIÇÃO
+# 3. ROTINA DE LIMPEZA
 # ==========================================
-print("\n🧹 Atualizando banco e deletando fotos corrompidas...")
+print("\n🧹 Marcando imóveis indisponíveis...")
 cursor.execute("UPDATE imoveis SET status = 'Indisponível' WHERE data_ultima_vista != ?", (hoje,))
 conn.commit()
 
 # ==========================================
-# 4. DOWNLOAD BLINDADO
+# 4. DOWNLOAD COM PLANO B INCORPORADO
 # ==========================================
-print("\n📸 Baixando fotos (Garantia de Autenticidade)...")
-cursor.execute("SELECT id_imovel, origem FROM imoveis")
-for (id_imovel, origem) in cursor.fetchall():
+print("\n📸 Baixando fotos (Ativando Plano B se necessário)...")
+cursor.execute("SELECT id_imovel, origem, status FROM imoveis")
+for (id_imovel, origem, status) in cursor.fetchall():
     if origem == 'QuintoAndar' and not os.path.exists(f"{pasta_fotos}/{id_imovel}_foto_1.jpg"):
         try:
             res = requests.get(f"https://www.quintoandar.com.br/imovel/{id_imovel}", headers=headers)
@@ -225,18 +218,45 @@ for (id_imovel, origem) in cursor.fetchall():
         except: pass
         
     elif origem == 'VivaReal':
-        # DESTRÓI QUALQUER FOTO VELHA PARA NÃO DEIXAR RASTRO
+        # Queima lixo antigo
         for i in range(1, 4):
             f_path = f"{pasta_fotos}/{id_imovel}_foto_{i}.jpg"
             if os.path.exists(f_path): os.remove(f_path)
             
-        # SALVA APENAS AS FOTOS PERFEITAMENTE ISOLADAS
-        if id_imovel in fotos_pendentes_vr:
+        fotos_baixadas = 0
+        
+        # PLANO A: Usa as fotos isoladas do Motor Principal
+        if id_imovel in fotos_pendentes_vr and len(fotos_pendentes_vr[id_imovel]) > 0:
             for i, url_foto in enumerate(fotos_pendentes_vr[id_imovel]):
                 try:
                     img_data = requests.get(url_foto, headers=headers).content
-                    with open(f"{pasta_fotos}/{id_imovel}_foto_{i+1}.jpg", 'wb') as f: f.write(img_data)
+                    with open(f"{pasta_fotos}/{id_imovel}_foto_{i+1}.jpg", 'wb') as f: 
+                        f.write(img_data)
+                        fotos_baixadas += 1
                 except: pass
+                
+        # PLANO B (O Aríete): Se não achou fotos no site de busca, entra na página do imóvel
+        if fotos_baixadas == 0 and status != 'Indisponível':
+            try:
+                mercado_url = "venda" if "Venda" in status else "aluguel"
+                target_id = id_imovel.replace("VR-", "")
+                
+                res = requests.get(f"https://www.vivareal.com.br/imovel/{mercado_url}-id-{target_id}/", headers=headers)
+                urls_fallback = re.findall(r'(https://resizedimgs\.vivareal\.com/[^\s"\'\\]+)', res.text)
+                
+                urls_limpas = []
+                for u in urls_fallback:
+                    u_low = u.lower()
+                    if 'logo' not in u_low and 'avatar' not in u_low:
+                        u_clean = u.replace('\\u002F', '/') # Limpa a URL se vier codificada do JSON
+                        if u_clean not in urls_limpas:
+                            urls_limpas.append(u_clean)
+                            
+                for i, url_foto in enumerate(urls_limpas[:3]):
+                    img_data = requests.get(url_foto, headers=headers).content
+                    with open(f"{pasta_fotos}/{id_imovel}_foto_{i+1}.jpg", 'wb') as f: 
+                        f.write(img_data)
+            except: pass
 
 print("🖥️ Gerando Dashboard Unificado...")
 df_imoveis = pd.read_sql_query("SELECT * FROM imoveis", conn)
@@ -406,4 +426,4 @@ function aplicarFiltros() {
 }</script></body></html>"""
 
 with open("index.html", "w", encoding="utf-8") as f: f.write(html)
-print("✅ Tudo pronto! Dashboard atualizado. O algoritmo de fronteira aniquilou os vazamentos.")
+print("✅ Tudo pronto! O Aríete quebrou as defesas do VivaReal.")
