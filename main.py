@@ -17,7 +17,7 @@ from bs4 import BeautifulSoup
 hoje = datetime.now().strftime('%Y-%m-%d')
 headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
-print("🚀 INICIANDO SUPER SISTEMA (MOTOR DE IMAGENS BOTTOM-UP)...")
+print("🚀 INICIANDO SUPER SISTEMA (ISOLAMENTO DE FRONTEIRA ATIVADO)...")
 
 pasta_fotos = 'fotos_imoveis'
 if not os.path.exists(pasta_fotos): os.makedirs(pasta_fotos)
@@ -82,9 +82,9 @@ for id_imovel in lista_ids_qa:
     except: pass
 
 # ==========================================
-# 2. MOTOR VIVAREAL (BOTTOM-UP IMAGE EXTRACTOR)
+# 2. MOTOR VIVAREAL (ISOLAMENTO DE FRONTEIRA)
 # ==========================================
-print("\n🕵️ Iniciando Infiltração VivaReal...")
+print("\n🕵️ Iniciando Infiltração VivaReal com Fronteiras Rígidas...")
 chrome_options = Options()
 chrome_options.add_argument('--headless=new') 
 chrome_options.add_argument('--no-sandbox')
@@ -104,7 +104,7 @@ for mercado, url_base in rotas_vr.items():
     while True:
         driver.get(f"{url_base}?pagina={pagina}")
         
-        # Injeção JS: Traz as imagens à tona
+        # Desliga a preguiça das imagens para podermos extraí-las
         driver.execute_script("""
             document.querySelectorAll('img').forEach(img => {
                 img.loading = 'eager';
@@ -119,34 +119,8 @@ for mercado, url_base in rotas_vr.items():
         time.sleep(2) 
         
         soup = BeautifulSoup(driver.page_source, 'html.parser')
-        
-        # 📸 A MÁGICA BOTTOM-UP: Liga a foto ao seu dono real 📸
-        for img in soup.find_all('img'):
-            src = img.get('src') or ''
-            src_l = src.lower()
-            if not src or 'http' not in src or 'logo' in src_l or 'avatar' in src_l or 'icon' in src_l: continue
-            
-            target_id = None
-            parent_a = img.find_parent('a')
-            if parent_a:
-                m = re.search(r'-id-(\d+)', parent_a.get('href', ''))
-                if m: target_id = m.group(1)
-            
-            if not target_id:
-                parent_article = img.find_parent('article')
-                if parent_article:
-                    a_tag = parent_article.find('a', href=re.compile(r'-id-\d+'))
-                    if a_tag:
-                        m = re.search(r'-id-(\d+)', a_tag.get('href', ''))
-                        if m: target_id = m.group(1)
-            
-            if target_id:
-                id_imovel = f"VR-{target_id}"
-                if id_imovel not in fotos_pendentes_vr: fotos_pendentes_vr[id_imovel] = []
-                if src not in fotos_pendentes_vr[id_imovel] and len(fotos_pendentes_vr[id_imovel]) < 3:
-                    fotos_pendentes_vr[id_imovel].append(src)
-
         links_imoveis = soup.find_all('a', href=re.compile(r'/imovel/'))
+        
         ids_nesta_pagina = set()
         for a in links_imoveis:
             m = re.search(r'-id-(\d+)', a.get('href', ''))
@@ -162,8 +136,23 @@ for mercado, url_base in rotas_vr.items():
                 url = link_tag.get('href', '')
                 if "ERROR" in url or "showcase" in url.lower() or "osasco" not in url.lower(): continue
                 
-                card = link_tag.find_parent('article')
-                if not card: card = link_tag.parent.parent.parent
+                # 🚧 O ALGORITMO DE FRONTEIRA INFALÍVEL 🚧
+                current = link_tag
+                card = current
+                while current.parent and current.parent.name not in ['body', 'html']:
+                    parent = current.parent
+                    
+                    # Converte o código do PAI em texto e procura TODOS os IDs lá dentro
+                    html_pai = str(parent)
+                    ids_no_pai = set(re.findall(r'-id-(\d+)', html_pai))
+                    
+                    # Remove o NOSSO ID. Se sobrar algum, significa que tocamos no anúncio vizinho!
+                    ids_no_pai.discard(target_id)
+                    if len(ids_no_pai) > 0:
+                        card = current # A gaveta perfeita é o nível logo abaixo
+                        break
+                        
+                    current = parent
                 
                 texto_card = card.get_text(separator=' ', strip=True).lower()
                 match_area = re.search(r'-(\d+)m2-', url)
@@ -179,6 +168,21 @@ for mercado, url_base in rotas_vr.items():
                         quartos = int(q_url.group(1)) if q_url else int((re.search(r'(\d+)\s*quarto', texto_card) or type('obj', (object,), {'group': lambda self, x: 0})()).group(1))
                         vagas = int((re.search(r'(\d+)\s*vaga', texto_card) or type('obj', (object,), {'group': lambda self, x: 0})()).group(1))
                         banheiros = int((re.search(r'(\d+)\s*banheiro', texto_card) or type('obj', (object,), {'group': lambda self, x: 0})()).group(1))
+                        
+                        # 📸 Extrai fotos APENAS da caixa isolada
+                        fotos_validas = []
+                        for tag in card.find_all(['img', 'source']):
+                            for attr in ['src', 'data-src', 'srcset', 'data-srcset']:
+                                val = tag.get(attr, '')
+                                if val:
+                                    # Lida com URLs complexas (srcset)
+                                    urls = [u.strip().split(' ')[0] for u in val.split(',')]
+                                    for u in urls:
+                                        if 'http' in u and 'vr-listing' in u.lower():
+                                            fotos_validas.append(u)
+                                            
+                        fotos = list(dict.fromkeys(fotos_validas))[:3]
+                        if fotos: fotos_pendentes_vr[id_imovel] = fotos
                         
                         p_venda = preco if mercado == "Venda" else 0
                         p_alug = preco if mercado == "Aluguel" else 0
@@ -198,16 +202,16 @@ for mercado, url_base in rotas_vr.items():
 driver.quit()
 
 # ==========================================
-# 3. ROTINA DE LIMPEZA
+# 3. ROTINA DE LIMPEZA E DESTRUIÇÃO
 # ==========================================
-print("\n🧹 Marcando imóveis que saíram do mercado hoje...")
+print("\n🧹 Atualizando banco e deletando fotos corrompidas...")
 cursor.execute("UPDATE imoveis SET status = 'Indisponível' WHERE data_ultima_vista != ?", (hoje,))
 conn.commit()
 
 # ==========================================
 # 4. DOWNLOAD BLINDADO
 # ==========================================
-print("\n📸 Queimando fotos erradas e baixando as originais...")
+print("\n📸 Baixando fotos (Garantia de Autenticidade)...")
 cursor.execute("SELECT id_imovel, origem FROM imoveis")
 for (id_imovel, origem) in cursor.fetchall():
     if origem == 'QuintoAndar' and not os.path.exists(f"{pasta_fotos}/{id_imovel}_foto_1.jpg"):
@@ -221,12 +225,12 @@ for (id_imovel, origem) in cursor.fetchall():
         except: pass
         
     elif origem == 'VivaReal':
-        # Queima o lixo antigo
+        # DESTRÓI QUALQUER FOTO VELHA PARA NÃO DEIXAR RASTRO
         for i in range(1, 4):
             f_path = f"{pasta_fotos}/{id_imovel}_foto_{i}.jpg"
             if os.path.exists(f_path): os.remove(f_path)
             
-        # Salva o arquivo correto
+        # SALVA APENAS AS FOTOS PERFEITAMENTE ISOLADAS
         if id_imovel in fotos_pendentes_vr:
             for i, url_foto in enumerate(fotos_pendentes_vr[id_imovel]):
                 try:
@@ -402,4 +406,4 @@ function aplicarFiltros() {
 }</script></body></html>"""
 
 with open("index.html", "w", encoding="utf-8") as f: f.write(html)
-print("✅ Tudo pronto! O Anti-Lazy Loading aniquilou as fotos fantasmas.")
+print("✅ Tudo pronto! Dashboard atualizado. O algoritmo de fronteira aniquilou os vazamentos.")
