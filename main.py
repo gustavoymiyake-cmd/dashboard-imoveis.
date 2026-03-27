@@ -17,7 +17,7 @@ from bs4 import BeautifulSoup
 hoje = datetime.now().strftime('%Y-%m-%d')
 headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
-print("🚀 INICIANDO SUPER SISTEMA (ANTI-LAZY LOADING ATIVADO)...")
+print("🚀 INICIANDO SUPER SISTEMA (MOTOR DE IMAGENS BOTTOM-UP)...")
 
 pasta_fotos = 'fotos_imoveis'
 if not os.path.exists(pasta_fotos): os.makedirs(pasta_fotos)
@@ -71,7 +71,6 @@ for id_imovel in lista_ids_qa:
             if area <= 40 and (p_v_base <= 420000 or p_v_base == 0):
                 v_ativa, p_venda, dv = checar_mercado_qa(id_imovel, 'comprar')
                 a_ativa, p_alug, da = checar_mercado_qa(id_imovel, 'alugar')
-                
                 status_real = 'Venda e Aluguel' if v_ativa and a_ativa else 'Apenas Venda' if v_ativa else 'Apenas Aluguel' if a_ativa else 'Indisponível'
                 
                 cursor.execute("SELECT id_imovel FROM imoveis WHERE id_imovel = ?", (id_imovel,))
@@ -83,9 +82,9 @@ for id_imovel in lista_ids_qa:
     except: pass
 
 # ==========================================
-# 2. MOTOR VIVAREAL (JS INJECTION + DOM ESTRITO)
+# 2. MOTOR VIVAREAL (BOTTOM-UP IMAGE EXTRACTOR)
 # ==========================================
-print("\n🕵️ Iniciando Infiltração VivaReal com Hack de Imagens...")
+print("\n🕵️ Iniciando Infiltração VivaReal...")
 chrome_options = Options()
 chrome_options.add_argument('--headless=new') 
 chrome_options.add_argument('--no-sandbox')
@@ -105,7 +104,7 @@ for mercado, url_base in rotas_vr.items():
     while True:
         driver.get(f"{url_base}?pagina={pagina}")
         
-        # O HACK MÁGICO DO JAVASCRIPT: Desliga o Lazy Load e força o SRC real a aparecer!
+        # Injeção JS: Traz as imagens à tona
         driver.execute_script("""
             document.querySelectorAll('img').forEach(img => {
                 img.loading = 'eager';
@@ -117,13 +116,37 @@ for mercado, url_base in rotas_vr.items():
         for i in range(1, 11):
             driver.execute_script(f"window.scrollTo(0, document.body.scrollHeight * ({i}/10));")
             time.sleep(0.5) 
-            
-        time.sleep(2) # Pausa extra para garantir que as fotos pesadas baixem
+        time.sleep(2) 
         
         soup = BeautifulSoup(driver.page_source, 'html.parser')
-        links_imoveis = soup.find_all('a', href=re.compile(r'/imovel/'))
         
-        # Filtra apenas os links que contêm ID para não repetir trabalho
+        # 📸 A MÁGICA BOTTOM-UP: Liga a foto ao seu dono real 📸
+        for img in soup.find_all('img'):
+            src = img.get('src') or ''
+            src_l = src.lower()
+            if not src or 'http' not in src or 'logo' in src_l or 'avatar' in src_l or 'icon' in src_l: continue
+            
+            target_id = None
+            parent_a = img.find_parent('a')
+            if parent_a:
+                m = re.search(r'-id-(\d+)', parent_a.get('href', ''))
+                if m: target_id = m.group(1)
+            
+            if not target_id:
+                parent_article = img.find_parent('article')
+                if parent_article:
+                    a_tag = parent_article.find('a', href=re.compile(r'-id-\d+'))
+                    if a_tag:
+                        m = re.search(r'-id-(\d+)', a_tag.get('href', ''))
+                        if m: target_id = m.group(1)
+            
+            if target_id:
+                id_imovel = f"VR-{target_id}"
+                if id_imovel not in fotos_pendentes_vr: fotos_pendentes_vr[id_imovel] = []
+                if src not in fotos_pendentes_vr[id_imovel] and len(fotos_pendentes_vr[id_imovel]) < 3:
+                    fotos_pendentes_vr[id_imovel].append(src)
+
+        links_imoveis = soup.find_all('a', href=re.compile(r'/imovel/'))
         ids_nesta_pagina = set()
         for a in links_imoveis:
             m = re.search(r'-id-(\d+)', a.get('href', ''))
@@ -133,21 +156,16 @@ for mercado, url_base in rotas_vr.items():
 
         for target_id in ids_nesta_pagina:
             try:
-                # Busca a tag exata <article> que o VivaReal usa para empacotar o imóvel
                 links = soup.find_all('a', href=re.compile(f'-id-{target_id}'))
                 if not links: continue
                 link_tag = links[0]
                 url = link_tag.get('href', '')
-                
                 if "ERROR" in url or "showcase" in url.lower() or "osasco" not in url.lower(): continue
                 
-                # Isolamento estrito (graças ao seu HTML!)
                 card = link_tag.find_parent('article')
-                if not card: card = link_tag.find_parent('div', class_=re.compile(r'card'))
                 if not card: card = link_tag.parent.parent.parent
                 
                 texto_card = card.get_text(separator=' ', strip=True).lower()
-                
                 match_area = re.search(r'-(\d+)m2-', url)
                 match_preco = re.search(r'-RS(\d+)-id', url)
                 
@@ -161,17 +179,6 @@ for mercado, url_base in rotas_vr.items():
                         quartos = int(q_url.group(1)) if q_url else int((re.search(r'(\d+)\s*quarto', texto_card) or type('obj', (object,), {'group': lambda self, x: 0})()).group(1))
                         vagas = int((re.search(r'(\d+)\s*vaga', texto_card) or type('obj', (object,), {'group': lambda self, x: 0})()).group(1))
                         banheiros = int((re.search(r'(\d+)\s*banheiro', texto_card) or type('obj', (object,), {'group': lambda self, x: 0})()).group(1))
-                        
-                        # Captura as fotos REAIS (graças à injeção JS)
-                        fotos_validas = []
-                        for img in card.find_all('img'):
-                            src = img.get('src') or ''
-                            # Só salva se tiver cara de foto de imóvel
-                            if 'http' in src and ('vr-listing' in src or 'vivareal' in src) and 'logo' not in src.lower():
-                                fotos_validas.append(src)
-                                
-                        fotos = list(dict.fromkeys(fotos_validas))[:3]
-                        if fotos: fotos_pendentes_vr[id_imovel] = fotos
                         
                         p_venda = preco if mercado == "Venda" else 0
                         p_alug = preco if mercado == "Aluguel" else 0
@@ -198,7 +205,7 @@ cursor.execute("UPDATE imoveis SET status = 'Indisponível' WHERE data_ultima_vi
 conn.commit()
 
 # ==========================================
-# 4. DESTRUIÇÃO DE FOTOS VELHAS E DOWNLOAD DAS NOVAS
+# 4. DOWNLOAD BLINDADO
 # ==========================================
 print("\n📸 Queimando fotos erradas e baixando as originais...")
 cursor.execute("SELECT id_imovel, origem FROM imoveis")
@@ -214,12 +221,12 @@ for (id_imovel, origem) in cursor.fetchall():
         except: pass
         
     elif origem == 'VivaReal':
-        # DESTRÓI as fotos físicas do VivaReal toda vez que o robô roda
+        # Queima o lixo antigo
         for i in range(1, 4):
             f_path = f"{pasta_fotos}/{id_imovel}_foto_{i}.jpg"
             if os.path.exists(f_path): os.remove(f_path)
             
-        # BAIXA as fotos novinhas em folha que a injeção JS conseguiu capturar
+        # Salva o arquivo correto
         if id_imovel in fotos_pendentes_vr:
             for i, url_foto in enumerate(fotos_pendentes_vr[id_imovel]):
                 try:
