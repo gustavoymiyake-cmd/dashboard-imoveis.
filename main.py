@@ -17,7 +17,7 @@ from bs4 import BeautifulSoup
 hoje = datetime.now().strftime('%Y-%m-%d')
 headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
-print("🚀 INICIANDO SUPER SISTEMA (ARÍETE FANTASMA ATIVADO)...")
+print("🚀 INICIANDO SUPER SISTEMA (EXTRAÇÃO VIA JSON-LD)...")
 
 pasta_fotos = 'fotos_imoveis'
 if not os.path.exists(pasta_fotos): os.makedirs(pasta_fotos)
@@ -103,23 +103,53 @@ for mercado, url_base in rotas_vr.items():
     pagina = 1
     while True:
         driver.get(f"{url_base}?pagina={pagina}")
-        
-        driver.execute_script("""
-            document.querySelectorAll('img').forEach(img => {
-                img.loading = 'eager';
-                img.fetchpriority = 'high';
-                if(img.getAttribute('data-src')) { img.src = img.getAttribute('data-src'); }
-            });
-        """)
-        
-        for i in range(1, 11):
-            driver.execute_script(f"window.scrollTo(0, document.body.scrollHeight * ({i}/10));")
-            time.sleep(0.5) 
         time.sleep(2) 
         
         soup = BeautifulSoup(driver.page_source, 'html.parser')
-        links_imoveis = soup.find_all('a', href=re.compile(r'/imovel/'))
         
+        # 📸 EXTRAÇÃO VIA JSON-LD 📸
+        json_ld_scripts = soup.find_all('script', type='application/ld+json')
+        for script in json_ld_scripts:
+            try:
+                # O JSON-LD pode conter uma lista ou um dicionário. Vamos tentar processar tudo.
+                data = json.loads(script.string)
+                
+                # Vamos iterar por todos os itens se for uma lista (ou forçar para virar lista se for dict)
+                items_to_process = data if isinstance(data, list) else [data]
+                
+                for item in items_to_process:
+                    # Pode estar estruturado com @type = ItemList
+                    if item.get('@type') == 'ItemList' and 'itemListElement' in item:
+                        elements = item['itemListElement']
+                    # Ou diretamente no formato ListItem que você mandou
+                    elif item.get('@type') == 'ListItem' and 'item' in item:
+                        elements = [item]
+                    else:
+                        continue
+                        
+                    for element in elements:
+                        imovel_data = element.get('item', {})
+                        target_id = imovel_data.get('@id')
+                        
+                        if target_id:
+                            id_imovel = f"VR-{target_id}"
+                            imagens_list = imovel_data.get('image', [])
+                            
+                            # Se for uma única imagem, colocamos numa lista
+                            if isinstance(imagens_list, str):
+                                imagens_list = [imagens_list]
+                                
+                            fotos_validas = []
+                            for img_url in imagens_list:
+                                if isinstance(img_url, str) and img_url.startswith('http'):
+                                    fotos_validas.append(img_url.split('?')[0]) # Tira parâmetros desnecessários
+                            
+                            if fotos_validas:
+                                fotos_pendentes_vr[id_imovel] = fotos_validas[:3]
+            except: pass
+
+        # Agora, processa os links normais para extrair os outros dados
+        links_imoveis = soup.find_all('a', href=re.compile(r'/imovel/'))
         ids_nesta_pagina = set()
         for a in links_imoveis:
             m = re.search(r'-id-(\d+)', a.get('href', ''))
@@ -135,17 +165,8 @@ for mercado, url_base in rotas_vr.items():
                 url = link_tag.get('href', '')
                 if "ERROR" in url or "showcase" in url.lower() or "osasco" not in url.lower(): continue
                 
-                current = link_tag
-                card = current
-                while current.parent and current.parent.name not in ['body', 'html']:
-                    parent = current.parent
-                    html_pai = str(parent)
-                    ids_no_pai = set(re.findall(r'-id-(\d+)', html_pai))
-                    ids_no_pai.discard(target_id)
-                    if len(ids_no_pai) > 0:
-                        card = current 
-                        break
-                    current = parent
+                card = link_tag.find_parent('article')
+                if not card: card = link_tag.parent.parent.parent
                 
                 texto_card = card.get_text(separator=' ', strip=True).lower()
                 match_area = re.search(r'-(\d+)m2-', url)
@@ -161,20 +182,6 @@ for mercado, url_base in rotas_vr.items():
                         quartos = int(q_url.group(1)) if q_url else int((re.search(r'(\d+)\s*quarto', texto_card) or type('obj', (object,), {'group': lambda self, x: 0})()).group(1))
                         vagas = int((re.search(r'(\d+)\s*vaga', texto_card) or type('obj', (object,), {'group': lambda self, x: 0})()).group(1))
                         banheiros = int((re.search(r'(\d+)\s*banheiro', texto_card) or type('obj', (object,), {'group': lambda self, x: 0})()).group(1))
-                        
-                        fotos_validas = []
-                        for tag in card.find_all(['img', 'source']):
-                            for attr in ['src', 'data-src', 'srcset', 'data-srcset']:
-                                val = tag.get(attr, '')
-                                if val:
-                                    urls = [u.strip().split(' ')[0] for u in val.split(',')]
-                                    for u in urls:
-                                        u_low = u.lower()
-                                        if u_low.startswith('http') and 'logo' not in u_low and 'avatar' not in u_low and 'icon' not in u_low and 'svg' not in u_low:
-                                            fotos_validas.append(u)
-                                            
-                        fotos = list(dict.fromkeys(fotos_validas))[:3]
-                        if fotos: fotos_pendentes_vr[id_imovel] = fotos
                         
                         p_venda = preco if mercado == "Venda" else 0
                         p_alug = preco if mercado == "Aluguel" else 0
@@ -200,9 +207,9 @@ cursor.execute("UPDATE imoveis SET status = 'Indisponível' WHERE data_ultima_vi
 conn.commit()
 
 # ==========================================
-# 4. DOWNLOAD BLINDADO (USANDO SELENIUM COMO ARÍETE)
+# 4. DOWNLOAD BLINDADO
 # ==========================================
-print("\n📸 Baixando fotos (Ativando Infiltração Direta para os que falharam)...")
+print("\n📸 Baixando fotos...")
 cursor.execute("SELECT id_imovel, origem, status FROM imoveis")
 for (id_imovel, origem, status) in cursor.fetchall():
     if origem == 'QuintoAndar' and not os.path.exists(f"{pasta_fotos}/{id_imovel}_foto_1.jpg"):
@@ -216,36 +223,34 @@ for (id_imovel, origem, status) in cursor.fetchall():
         except: pass
         
     elif origem == 'VivaReal':
-        # Queima lixo antigo
+        # Queima o lixo antigo
         for i in range(1, 4):
             f_path = f"{pasta_fotos}/{id_imovel}_foto_{i}.jpg"
             if os.path.exists(f_path): os.remove(f_path)
             
         fotos_baixadas = 0
         
-        # PLANO A: Usa as fotos isoladas do Motor Principal
+        # PLANO A: Usa o mapeamento JSON-LD infalível!
         if id_imovel in fotos_pendentes_vr and len(fotos_pendentes_vr[id_imovel]) > 0:
             for i, url_foto in enumerate(fotos_pendentes_vr[id_imovel]):
                 try:
                     img_data = requests.get(url_foto, headers=headers).content
-                    # Só salva se a imagem for real (mais de 1KB) e não um bloqueio 403 camuflado
                     if len(img_data) > 1000:
                         with open(f"{pasta_fotos}/{id_imovel}_foto_{i+1}.jpg", 'wb') as f: 
                             f.write(img_data)
                             fotos_baixadas += 1
                 except: pass
-                
-        # PLANO B: O ARÍETE (Usa o Navegador Invisível para entrar na página do imóvel)
+
+        # PLANO B (O Aríete): Se o JSON-LD falhar, vai na página (com fallback)
         if fotos_baixadas == 0 and status != 'Indisponível':
             try:
                 mercado_url = "venda" if "Venda" in status else "aluguel"
                 target_id = id_imovel.replace("VR-", "")
                 url_imovel = f"https://www.vivareal.com.br/imovel/{mercado_url}-id-{target_id}/"
                 
-                # O Navegador vai até a porta do apartamento e entra!
                 driver.get(url_imovel)
                 time.sleep(2) 
-                driver.execute_script("window.scrollTo(0, 500);") # Rola para carregar a galeria
+                driver.execute_script("window.scrollTo(0, 500);")
                 time.sleep(1)
                 
                 soup_imovel = BeautifulSoup(driver.page_source, 'html.parser')
@@ -270,7 +275,6 @@ for (id_imovel, origem, status) in cursor.fetchall():
                             f.write(img_data)
             except: pass
 
-# Só fechamos o navegador depois que o Plano B terminar!
 driver.quit()
 
 print("🖥️ Gerando Dashboard Unificado...")
@@ -441,4 +445,4 @@ function aplicarFiltros() {
 }</script></body></html>"""
 
 with open("index.html", "w", encoding="utf-8") as f: f.write(html)
-print("✅ Tudo pronto! O Aríete quebrou as defesas do VivaReal.")
+print("✅ Tudo pronto! A Força Tarefa JSON + Aríete foi ativada.")
