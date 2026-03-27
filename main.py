@@ -17,7 +17,7 @@ from bs4 import BeautifulSoup
 hoje = datetime.now().strftime('%Y-%m-%d')
 headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
-print("🚀 INICIANDO SUPER SISTEMA (SISTEMA DUPLO DE CAPTURA DE IMAGENS)...")
+print("🚀 INICIANDO SUPER SISTEMA (ARÍETE FANTASMA ATIVADO)...")
 
 pasta_fotos = 'fotos_imoveis'
 if not os.path.exists(pasta_fotos): os.makedirs(pasta_fotos)
@@ -162,7 +162,6 @@ for mercado, url_base in rotas_vr.items():
                         vagas = int((re.search(r'(\d+)\s*vaga', texto_card) or type('obj', (object,), {'group': lambda self, x: 0})()).group(1))
                         banheiros = int((re.search(r'(\d+)\s*banheiro', texto_card) or type('obj', (object,), {'group': lambda self, x: 0})()).group(1))
                         
-                        # 📸 FILTRO RELAXADO: Aceita ZAP e VivaReal, recusa apenas Lixo 📸
                         fotos_validas = []
                         for tag in card.find_all(['img', 'source']):
                             for attr in ['src', 'data-src', 'srcset', 'data-srcset']:
@@ -192,7 +191,6 @@ for mercado, url_base in rotas_vr.items():
             except: pass
         pagina += 1
         if pagina > 5: break
-driver.quit()
 
 # ==========================================
 # 3. ROTINA DE LIMPEZA
@@ -202,9 +200,9 @@ cursor.execute("UPDATE imoveis SET status = 'Indisponível' WHERE data_ultima_vi
 conn.commit()
 
 # ==========================================
-# 4. DOWNLOAD COM PLANO B INCORPORADO
+# 4. DOWNLOAD BLINDADO (USANDO SELENIUM COMO ARÍETE)
 # ==========================================
-print("\n📸 Baixando fotos (Ativando Plano B se necessário)...")
+print("\n📸 Baixando fotos (Ativando Infiltração Direta para os que falharam)...")
 cursor.execute("SELECT id_imovel, origem, status FROM imoveis")
 for (id_imovel, origem, status) in cursor.fetchall():
     if origem == 'QuintoAndar' and not os.path.exists(f"{pasta_fotos}/{id_imovel}_foto_1.jpg"):
@@ -230,33 +228,50 @@ for (id_imovel, origem, status) in cursor.fetchall():
             for i, url_foto in enumerate(fotos_pendentes_vr[id_imovel]):
                 try:
                     img_data = requests.get(url_foto, headers=headers).content
-                    with open(f"{pasta_fotos}/{id_imovel}_foto_{i+1}.jpg", 'wb') as f: 
-                        f.write(img_data)
-                        fotos_baixadas += 1
+                    # Só salva se a imagem for real (mais de 1KB) e não um bloqueio 403 camuflado
+                    if len(img_data) > 1000:
+                        with open(f"{pasta_fotos}/{id_imovel}_foto_{i+1}.jpg", 'wb') as f: 
+                            f.write(img_data)
+                            fotos_baixadas += 1
                 except: pass
                 
-        # PLANO B (O Aríete): Se não achou fotos no site de busca, entra na página do imóvel
+        # PLANO B: O ARÍETE (Usa o Navegador Invisível para entrar na página do imóvel)
         if fotos_baixadas == 0 and status != 'Indisponível':
             try:
                 mercado_url = "venda" if "Venda" in status else "aluguel"
                 target_id = id_imovel.replace("VR-", "")
+                url_imovel = f"https://www.vivareal.com.br/imovel/{mercado_url}-id-{target_id}/"
                 
-                res = requests.get(f"https://www.vivareal.com.br/imovel/{mercado_url}-id-{target_id}/", headers=headers)
-                urls_fallback = re.findall(r'(https://resizedimgs\.vivareal\.com/[^\s"\'\\]+)', res.text)
+                # O Navegador vai até a porta do apartamento e entra!
+                driver.get(url_imovel)
+                time.sleep(2) 
+                driver.execute_script("window.scrollTo(0, 500);") # Rola para carregar a galeria
+                time.sleep(1)
                 
-                urls_limpas = []
-                for u in urls_fallback:
-                    u_low = u.lower()
-                    if 'logo' not in u_low and 'avatar' not in u_low:
-                        u_clean = u.replace('\\u002F', '/') # Limpa a URL se vier codificada do JSON
-                        if u_clean not in urls_limpas:
-                            urls_limpas.append(u_clean)
-                            
-                for i, url_foto in enumerate(urls_limpas[:3]):
+                soup_imovel = BeautifulSoup(driver.page_source, 'html.parser')
+                fotos_fallback = []
+                
+                for tag in soup_imovel.find_all(['img', 'source']):
+                    for attr in ['src', 'data-src', 'srcset', 'data-srcset']:
+                        val = tag.get(attr, '')
+                        if val:
+                            urls = [u.strip().split(' ')[0] for u in val.split(',')]
+                            for u in urls:
+                                u_low = u.lower()
+                                if u_low.startswith('http') and 'logo' not in u_low and 'avatar' not in u_low and 'icon' not in u_low and 'svg' not in u_low and 'mapa' not in u_low:
+                                    fotos_fallback.append(u)
+                                    
+                fotos_limpas = list(dict.fromkeys(fotos_fallback))[:3]
+                
+                for i, url_foto in enumerate(fotos_limpas):
                     img_data = requests.get(url_foto, headers=headers).content
-                    with open(f"{pasta_fotos}/{id_imovel}_foto_{i+1}.jpg", 'wb') as f: 
-                        f.write(img_data)
+                    if len(img_data) > 1000:
+                        with open(f"{pasta_fotos}/{id_imovel}_foto_{i+1}.jpg", 'wb') as f: 
+                            f.write(img_data)
             except: pass
+
+# Só fechamos o navegador depois que o Plano B terminar!
+driver.quit()
 
 print("🖥️ Gerando Dashboard Unificado...")
 df_imoveis = pd.read_sql_query("SELECT * FROM imoveis", conn)
