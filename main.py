@@ -17,7 +17,7 @@ from bs4 import BeautifulSoup
 hoje = datetime.now().strftime('%Y-%m-%d')
 headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
-print("🚀 INICIANDO SUPER SISTEMA (CORREÇÃO DE IMAGENS)...")
+print("🚀 INICIANDO SUPER SISTEMA (ISOLAMENTO DE IMAGENS ATIVADO)...")
 
 pasta_fotos = 'fotos_imoveis'
 if not os.path.exists(pasta_fotos): os.makedirs(pasta_fotos)
@@ -83,9 +83,9 @@ for id_imovel in lista_ids_qa:
     except: pass
 
 # ==========================================
-# 2. MOTOR VIVAREAL (COM FILTRO RIGOROSO DE IMAGENS)
+# 2. MOTOR VIVAREAL (DOM TREE ISOLATION)
 # ==========================================
-print("\n🕵️ Iniciando Infiltração VivaReal...")
+print("\n🕵️ Iniciando Infiltração VivaReal com Escopo Cirúrgico...")
 chrome_options = Options()
 chrome_options.add_argument('--headless=new') 
 chrome_options.add_argument('--no-sandbox')
@@ -99,6 +99,7 @@ rotas_vr = {
     "Aluguel": "https://www.vivareal.com.br/aluguel/sp/osasco/bairros/presidente-altino/rua-jubair-celestino/apartamento_residencial/"
 }
 fotos_pendentes_vr = {}
+processados_nesta_rodada = set() # Evita processar o mesmo imóvel repetidas vezes
 
 for mercado, url_base in rotas_vr.items():
     pagina = 1
@@ -117,15 +118,36 @@ for mercado, url_base in rotas_vr.items():
                 url = link_tag.get('href', '')
                 if not url or "ERROR" in url or "showcase" in url.lower() or "osasco" not in url.lower(): continue
                 
-                card = link_tag.find_parent('article') or link_tag.parent.parent.parent.parent.parent.parent
+                match_id = re.search(r'-id-(\d+)', url)
+                if not match_id: continue
+                
+                target_id = match_id.group(1)
+                id_imovel = f"VR-{target_id}"
+                
+                if id_imovel in processados_nesta_rodada: continue
+
+                # O SEGREDO DO ISOLAMENTO: Subir no HTML só até antes de misturar com o vizinho
+                current = link_tag
+                card = current
+                while current.parent and current.parent.name not in ['body', 'html']:
+                    parent = current.parent
+                    misturou = False
+                    for a in parent.find_all('a', href=re.compile(r'/imovel/')):
+                        m = re.search(r'-id-(\d+)', a.get('href', ''))
+                        if m and m.group(1) != target_id:
+                            misturou = True
+                            break
+                    if misturou:
+                        break # Paramos de subir, 'card' é a gaveta exata do nosso imóvel!
+                    card = current
+                    current = parent
+                
                 texto_card = card.get_text(separator=' ', strip=True).lower()
                 
-                match_id = re.search(r'-id-(\d+)', url)
                 match_area = re.search(r'-(\d+)m2-', url)
                 match_preco = re.search(r'-RS(\d+)-id', url)
                 
-                if match_area and match_preco and match_id:
-                    id_imovel = f"VR-{match_id.group(1)}"
+                if match_area and match_preco:
                     area = int(match_area.group(1))
                     preco = int(match_preco.group(1))
                     
@@ -135,12 +157,12 @@ for mercado, url_base in rotas_vr.items():
                         vagas = int((re.search(r'(\d+)\s*vaga', texto_card) or type('obj', (object,), {'group': lambda self, x: 0})()).group(1))
                         banheiros = int((re.search(r'(\d+)\s*banheiro', texto_card) or type('obj', (object,), {'group': lambda self, x: 0})()).group(1))
                         
-                        # 🛡️ FILTRO DE FOTOS CORRIGIDO 🛡️
+                        # Extrai fotos APENAS da gaveta isolada, ignorando logos e ícones
                         fotos_validas = []
                         for img in card.find_all('img'):
                             src = img.get('src') or img.get('data-src') or ''
-                            # Só pega imagens que tenham "vr-listing" ou "crop" (fotos reais) e ignora "logo"
-                            if 'http' in src and ('vr-listing' in src or 'crop' in src) and 'logo' not in src.lower():
+                            src_l = src.lower()
+                            if src.startswith('http') and 'logo' not in src_l and 'avatar' not in src_l and 'icon' not in src_l:
                                 fotos_validas.append(src)
                                 
                         fotos = list(dict.fromkeys(fotos_validas))[:3]
@@ -158,6 +180,8 @@ for mercado, url_base in rotas_vr.items():
                             if mercado == "Venda": cursor.execute("UPDATE imoveis SET preco_venda = ? WHERE id_imovel = ?", (preco, id_imovel))
                             if mercado == "Aluguel": cursor.execute("UPDATE imoveis SET preco_aluguel = ? WHERE id_imovel = ?", (preco, id_imovel))
                         conn.commit()
+                        
+                        processados_nesta_rodada.add(id_imovel)
             except: pass
         pagina += 1
         if pagina > 5: break
@@ -170,14 +194,12 @@ print("\n🧹 Marcando imóveis que saíram do mercado hoje...")
 cursor.execute("UPDATE imoveis SET status = 'Indisponível' WHERE data_ultima_vista != ?", (hoje,))
 conn.commit()
 
-
 # ==========================================
-# 4. DOWNLOAD DE FOTOS E HTML (COM SOBRESCRITA)
+# 4. DOWNLOAD FORÇADO DE FOTOS E HTML
 # ==========================================
-print("\n📸 Baixando e corrigindo imagens...")
+print("\n📸 Baixando imagens corrigidas e sobrescrevendo as antigas...")
 cursor.execute("SELECT id_imovel, origem FROM imoveis")
 for (id_imovel, origem) in cursor.fetchall():
-    # QuintoAndar (Baixa só se não existir)
     if origem == 'QuintoAndar' and not os.path.exists(f"{pasta_fotos}/{id_imovel}_foto_1.jpg"):
         try:
             res = requests.get(f"https://www.quintoandar.com.br/imovel/{id_imovel}", headers=headers)
@@ -188,11 +210,11 @@ for (id_imovel, origem) in cursor.fetchall():
                 with open(f"{pasta_fotos}/{id_imovel}_foto_{i+1}.jpg", 'wb') as f: f.write(img_data)
         except: pass
         
-    # VivaReal (Sobrescreve obrigatoriamente para limpar os logos velhos)
     elif origem == 'VivaReal' and id_imovel in fotos_pendentes_vr:
         for i, url_foto in enumerate(fotos_pendentes_vr[id_imovel]):
             try:
                 img_data = requests.get(url_foto, headers=headers).content
+                # O 'wb' força a sobrescrita das fotos erradas antigas por estas que são isoladas!
                 with open(f"{pasta_fotos}/{id_imovel}_foto_{i+1}.jpg", 'wb') as f: f.write(img_data)
             except: pass
 
@@ -210,7 +232,7 @@ body {{ margin: 0; padding: 0; background-color: #e9ecef; font-family: 'Segoe UI
 .control-group select {{ padding: 10px; border-radius: 6px; border: none; font-weight: bold; cursor: pointer; }} 
 .vitrine-container {{ display: flex; flex-wrap: wrap; gap: 20px; padding: 20px; justify-content: center; }} 
 .card-imovel {{ background: white; border-radius: 12px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); width: 340px; overflow: hidden; display: flex; flex-direction: column; position: relative; }} 
-.galeria-container {{ position: relative; width: 100%; height: 200px; overflow: hidden; }}
+.galeria-container {{ position: relative; width: 100%; height: 200px; overflow: hidden; background: #ecf0f1; }}
 .galeria-fotos {{ display: flex; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; height: 100%; width: 100%; align-items: center; scroll-behavior: smooth; }}
 .galeria-fotos::-webkit-scrollbar {{ display: none; }} 
 .galeria-fotos img {{ min-width: 100%; height: 200px; object-fit: cover; scroll-snap-align: center; }} 
@@ -364,4 +386,4 @@ function aplicarFiltros() {
 }</script></body></html>"""
 
 with open("index.html", "w", encoding="utf-8") as f: f.write(html)
-print("✅ Tudo pronto! Dashboard atualizado na nuvem.")
+print("✅ Tudo pronto! Dashboard atualizado na nuvem com isolamento fotográfico.")
