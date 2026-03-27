@@ -17,7 +17,7 @@ from bs4 import BeautifulSoup
 hoje = datetime.now().strftime('%Y-%m-%d')
 headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
-print("🚀 INICIANDO SUPER SISTEMA (QUINTOANDAR + VIVAREAL)...")
+print("🚀 INICIANDO SUPER SISTEMA (CORREÇÃO DE IMAGENS)...")
 
 pasta_fotos = 'fotos_imoveis'
 if not os.path.exists(pasta_fotos): os.makedirs(pasta_fotos)
@@ -53,11 +53,8 @@ def checar_mercado_qa(id_imovel, mercado):
         if '<script id="__NEXT_DATA__"' in res.text:
             json_str = res.text.split('<script id="__NEXT_DATA__" type="application/json">')[1].split('</script>')[0]
             house_info = json.loads(json_str)['props']['pageProps']['initialState']['house']['houseInfo']
-            
-            # Pegando a data de publicação real do QuintoAndar se existir
             d_pub = house_info.get('publicationDate') or ""
             if d_pub: d_pub = d_pub[:10]
-            
             return house_info.get('status', '').lower() in ['publicado', 'published'], house_info.get('salePrice') if mercado == 'comprar' else house_info.get('rentPrice') or 0, d_pub
     except: pass
     return False, 0, ""
@@ -86,7 +83,7 @@ for id_imovel in lista_ids_qa:
     except: pass
 
 # ==========================================
-# 2. MOTOR VIVAREAL
+# 2. MOTOR VIVAREAL (COM FILTRO RIGOROSO DE IMAGENS)
 # ==========================================
 print("\n🕵️ Iniciando Infiltração VivaReal...")
 chrome_options = Options()
@@ -138,7 +135,15 @@ for mercado, url_base in rotas_vr.items():
                         vagas = int((re.search(r'(\d+)\s*vaga', texto_card) or type('obj', (object,), {'group': lambda self, x: 0})()).group(1))
                         banheiros = int((re.search(r'(\d+)\s*banheiro', texto_card) or type('obj', (object,), {'group': lambda self, x: 0})()).group(1))
                         
-                        fotos = list(dict.fromkeys([img.get('src') or img.get('data-src') or '' for img in card.find_all('img') if 'http' in (img.get('src') or img.get('data-src') or '')]))[:3]
+                        # 🛡️ FILTRO DE FOTOS CORRIGIDO 🛡️
+                        fotos_validas = []
+                        for img in card.find_all('img'):
+                            src = img.get('src') or img.get('data-src') or ''
+                            # Só pega imagens que tenham "vr-listing" ou "crop" (fotos reais) e ignora "logo"
+                            if 'http' in src and ('vr-listing' in src or 'crop' in src) and 'logo' not in src.lower():
+                                fotos_validas.append(src)
+                                
+                        fotos = list(dict.fromkeys(fotos_validas))[:3]
                         if fotos: fotos_pendentes_vr[id_imovel] = fotos
                         
                         p_venda = preco if mercado == "Venda" else 0
@@ -147,7 +152,6 @@ for mercado, url_base in rotas_vr.items():
 
                         cursor.execute("SELECT id_imovel FROM imoveis WHERE id_imovel = ?", (id_imovel,))
                         if cursor.fetchone() is None:
-                            # VivaReal não mostra a data exata de publicação, usamos a "data_primeira_vista" (hoje)
                             cursor.execute('''INSERT INTO imoveis (id_imovel, tipo, cidade, bairro, rua, cep, area_m2, quartos, banheiros, vagas, preco_venda, preco_aluguel, condominio, iptu, data_primeira_vista, data_ultima_vista, status, data_pub_venda, data_pub_aluguel, origem) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''', (id_imovel, 'Apartamento', 'Osasco', 'Presidente Altino', "Doutor Jubair Celestino", '06216-160', area, quartos, banheiros, vagas, p_venda, p_alug, 0, 0, hoje, hoje, status_real, hoje, hoje, 'VivaReal'))
                         else:
                             cursor.execute('''UPDATE imoveis SET data_ultima_vista = ?, status = ? WHERE id_imovel = ?''', (hoje, status_real, id_imovel))
@@ -160,36 +164,37 @@ for mercado, url_base in rotas_vr.items():
 driver.quit()
 
 # ==========================================
-# 3. ROTINA DE LIMPEZA (CEMITÉRIO DE OPORTUNIDADES)
+# 3. ROTINA DE LIMPEZA
 # ==========================================
 print("\n🧹 Marcando imóveis que saíram do mercado hoje...")
-# Se um imóvel não foi "visto" hoje por nenhum dos robôs, significa que o anúncio caiu!
 cursor.execute("UPDATE imoveis SET status = 'Indisponível' WHERE data_ultima_vista != ?", (hoje,))
 conn.commit()
 
 
 # ==========================================
-# 4. DOWNLOAD DE FOTOS E HTML
+# 4. DOWNLOAD DE FOTOS E HTML (COM SOBRESCRITA)
 # ==========================================
-print("\n📸 Baixando imagens faltantes...")
+print("\n📸 Baixando e corrigindo imagens...")
 cursor.execute("SELECT id_imovel, origem FROM imoveis")
 for (id_imovel, origem) in cursor.fetchall():
-    if not os.path.exists(f"{pasta_fotos}/{id_imovel}_foto_1.jpg"):
-        if origem == 'QuintoAndar':
+    # QuintoAndar (Baixa só se não existir)
+    if origem == 'QuintoAndar' and not os.path.exists(f"{pasta_fotos}/{id_imovel}_foto_1.jpg"):
+        try:
+            res = requests.get(f"https://www.quintoandar.com.br/imovel/{id_imovel}", headers=headers)
+            json_str = res.text.split('<script id="__NEXT_DATA__" type="application/json">')[1].split('</script>')[0]
+            nomes = list(dict.fromkeys(re.findall(r'([a-zA-Z0-9_.-]*' + str(id_imovel) + r'[a-zA-Z0-9_.-]*\.(?:jpg|jpeg|webp))', json_str) or re.findall(r'(original[a-zA-Z0-9_.-]+\.(?:jpg|jpeg|webp))', json_str)))[:3]
+            for i, nome in enumerate(nomes):
+                img_data = requests.get(f"https://www.quintoandar.com.br/img/800x600/{nome}", headers=headers).content
+                with open(f"{pasta_fotos}/{id_imovel}_foto_{i+1}.jpg", 'wb') as f: f.write(img_data)
+        except: pass
+        
+    # VivaReal (Sobrescreve obrigatoriamente para limpar os logos velhos)
+    elif origem == 'VivaReal' and id_imovel in fotos_pendentes_vr:
+        for i, url_foto in enumerate(fotos_pendentes_vr[id_imovel]):
             try:
-                res = requests.get(f"https://www.quintoandar.com.br/imovel/{id_imovel}", headers=headers)
-                json_str = res.text.split('<script id="__NEXT_DATA__" type="application/json">')[1].split('</script>')[0]
-                nomes = list(dict.fromkeys(re.findall(r'([a-zA-Z0-9_.-]*' + str(id_imovel) + r'[a-zA-Z0-9_.-]*\.(?:jpg|jpeg|webp))', json_str) or re.findall(r'(original[a-zA-Z0-9_.-]+\.(?:jpg|jpeg|webp))', json_str)))[:3]
-                for i, nome in enumerate(nomes):
-                    img_data = requests.get(f"https://www.quintoandar.com.br/img/800x600/{nome}", headers=headers).content
-                    with open(f"{pasta_fotos}/{id_imovel}_foto_{i+1}.jpg", 'wb') as f: f.write(img_data)
+                img_data = requests.get(url_foto, headers=headers).content
+                with open(f"{pasta_fotos}/{id_imovel}_foto_{i+1}.jpg", 'wb') as f: f.write(img_data)
             except: pass
-        elif origem == 'VivaReal' and id_imovel in fotos_pendentes_vr:
-            for i, url_foto in enumerate(fotos_pendentes_vr[id_imovel]):
-                try:
-                    img_data = requests.get(url_foto, headers=headers).content
-                    with open(f"{pasta_fotos}/{id_imovel}_foto_{i+1}.jpg", 'wb') as f: f.write(img_data)
-                except: pass
 
 print("🖥️ Gerando Dashboard Unificado...")
 df_imoveis = pd.read_sql_query("SELECT * FROM imoveis", conn)
@@ -205,8 +210,6 @@ body {{ margin: 0; padding: 0; background-color: #e9ecef; font-family: 'Segoe UI
 .control-group select {{ padding: 10px; border-radius: 6px; border: none; font-weight: bold; cursor: pointer; }} 
 .vitrine-container {{ display: flex; flex-wrap: wrap; gap: 20px; padding: 20px; justify-content: center; }} 
 .card-imovel {{ background: white; border-radius: 12px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); width: 340px; overflow: hidden; display: flex; flex-direction: column; position: relative; }} 
-
-/* NOVO CSS DA GALERIA COM SETAS */
 .galeria-container {{ position: relative; width: 100%; height: 200px; overflow: hidden; }}
 .galeria-fotos {{ display: flex; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; height: 100%; width: 100%; align-items: center; scroll-behavior: smooth; }}
 .galeria-fotos::-webkit-scrollbar {{ display: none; }} 
@@ -214,7 +217,6 @@ body {{ margin: 0; padding: 0; background-color: #e9ecef; font-family: 'Segoe UI
 .btn-nav {{ position: absolute; top: 50%; transform: translateY(-50%); background: rgba(0,0,0,0.6); color: white; border: none; padding: 8px 12px; cursor: pointer; z-index: 10; font-size: 16px; border-radius: 50%; transition: 0.2s; }}
 .btn-nav:hover {{ background: rgba(0,0,0,0.9); transform: scale(1.1) translateY(-45%); }}
 .btn-prev {{ left: 5px; }} .btn-next {{ right: 5px; }}
-
 .info-imovel {{ padding: 15px; display: flex; flex-direction: column; gap: 8px; height: 100%; }} 
 .preco-box {{ background: #f8f9fa; padding: 12px; border-radius: 8px; border: 1px solid #dee2e6; }} 
 .linha-mercado {{ display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 5px; }} 
@@ -247,7 +249,7 @@ body {{ margin: 0; padding: 0; background-color: #e9ecef; font-family: 'Segoe UI
             <option value="Todos">👁️ Todos os Imóveis</option>
             <option value="Apenas Venda">💰 Filtro: Venda Ativa</option>
             <option value="Apenas Aluguel">🔑 Filtro: Aluguel Ativo</option>
-            <option value="Indisponível">❌ Filtro: Indisponíveis (Vendidos/Alugados)</option>
+            <option value="Indisponível">❌ Filtro: Indisponíveis</option>
         </select>
         <select id="sortOrder" onchange="aplicarFiltros()">
             <option value="default">↕️ Ordenação Padrão</option>
@@ -264,7 +266,6 @@ for _, row in df_imoveis.iterrows():
     id_imovel, status, origem = row['id_imovel'], row.get('status', 'Indisponível'), row.get('origem', 'QuintoAndar')
     val_v, val_a = row.get('preco_venda') or 0, row.get('preco_aluguel') or 0
     
-    # Tratando datas (Usando data_primeira_vista como "Capturado em")
     d_venda = row.get('data_pub_venda') or row.get('data_primeira_vista') or "N/A"
     d_alug = row.get('data_pub_aluguel') or row.get('data_primeira_vista') or "N/A"
     data_sort = row.get('data_primeira_vista') or "2000-01-01"
